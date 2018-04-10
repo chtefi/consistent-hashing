@@ -5,6 +5,8 @@ import org.scalacheck.{Arbitrary, Gen, Shrink}
 import org.scalatest.prop.PropertyChecks
 import org.scalatest.{FlatSpec, Matchers, OptionValues}
 import org.scalacheck.Arbitrary.arbitrary
+import shapeless.tag
+import shapeless.tag.@@
 
 import scala.collection.mutable.ListBuffer
 import scala.util.Random
@@ -26,9 +28,16 @@ object Generators {
     nodes <- Gen.nonEmptyListOf(nodeGen)
   } yield ConsistentHashing(replicaCount).withNodes(nodes: _*)
 
-  def keyInsertionCountGen: Gen[Int] = Gen.choose(1000, 100000)
+  trait Jump
+  val chJumpGen: Gen[ConsistentHashing @@ Jump] = for {
+    replicaCount <- replicaCountGen
+    nodes <- Gen.nonEmptyListOf(nodeGen)
+  } yield tag[Jump](ConsistentHashing(replicaCount, nodes).withNodes(nodes: _*))
+
+  def keyInsertionCountGen: Gen[Int] = Gen.choose(100, 10000)
 
   implicit val chArb = Arbitrary(chGen)
+  implicit val chJumpArb = Arbitrary(chJumpGen)
 
   implicit val noShrink: Shrink[Int] = Shrink.shrinkAny
 }
@@ -67,30 +76,62 @@ class ConsistentHashingSpec
     }
   }
 
-  it should "distribute the keys evenly" in {
+  private def meanDeviation(distribution: List[Int]): Double = {
+    val mean = distribution.sum * 1.0f / distribution.length
+    val variance = distribution.map(_ - mean).map(x => x * x).sum / distribution.length
+    val deviation = Math.sqrt(variance)
+    deviation / mean
+  }
+
+  it should "distribute the keys not really evenly by default" in {
     forAll { (ch: ConsistentHashing) =>
       forAll(keyInsertionCountGen) { count =>
-        val distribution = (1 to count)
+        val (nodes, vnodes) = (1 to count)
           .map { _ =>
-            ch.lookup(Random.nextString(10)).value.node
+            val vnode = ch.lookup(Random.nextString(10)).value
+            (vnode.node, vnode)
           }
-          .groupBy(identity)
-          .values
-          .map(_.length)
-          .toList
+          .unzip
 
-        val mean = distribution.sum * 1.0f / distribution.length
-        val variance = distribution.map(_ - mean).map(x => x * x).sum / distribution.length
-        val deviation = Math.sqrt(variance)
-        val deviationPercentage = deviation / mean
+        val List(nodeDistribution, vnodeDistribution) = Seq(nodes, vnodes)
+          .map(_.groupBy(identity)
+            .values
+            .map(_.length)
+            .toList)
 
-        println(distribution, deviationPercentage)
+        val (nodeMeanDev, vnodeMeanDev) = (meanDeviation(nodeDistribution), meanDeviation(vnodeDistribution))
+
+        // println(s"nodes ($nodeDistribution): $nodeMeanDev, vnodes ($vnodeDistribution): $vnodeMeanDev")
 
         // stupidly high and useless because sometimes the distribution per node really sucks!
-        // I saw results like 96% with 8 nodes, or even more than 100%.
-        // Meaning: the hash function sucks.
-        deviationPercentage should be < 2d
+        nodeMeanDev should be < 2d
 
+      }
+    }
+  }
+
+  it should "distribute the keys evenly with jump hash" in {
+    forAll { (ch: ConsistentHashing @@ Jump) =>
+      forAll(keyInsertionCountGen) { count =>
+        val (nodes, vnodes) = (1 to count)
+          .map { _ =>
+            val vnode = ch.lookup(Random.nextString(10)).value
+            (vnode.node, vnode)
+          }
+          .unzip
+
+        val List(nodeDistribution, vnodeDistribution) = Seq(nodes, vnodes)
+          .map(_.groupBy(identity)
+            .values
+            .map(_.length)
+            .toList)
+
+        val (nodeMeanDev, vnodeMeanDev) = (meanDeviation(nodeDistribution), meanDeviation(vnodeDistribution))
+
+        // println(s"nodes ($nodeDistribution): $nodeStddev, vnodes ($vnodeDistribution) $vnodeStdddev")
+
+        // still, not really distributed
+        nodeMeanDev should be < 1d
       }
     }
   }

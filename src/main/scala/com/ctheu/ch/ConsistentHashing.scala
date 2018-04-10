@@ -2,6 +2,8 @@ package com.ctheu.ch
 
 import java.security.MessageDigest
 
+import com.github.ssedano.hash.JumpConsistentHash
+
 import scala.collection.immutable.SortedMap
 import scala.util.hashing.{Hashing, MurmurHash3}
 
@@ -17,6 +19,13 @@ object ConsistentHashing {
     ConsistentHashingImpl(
       replicaCount,
       hashFn = MurmurHash3.stringHash,
+      SortedMap())
+  }
+
+  def apply(replicaCount: Int, nodes: List[Node]): ConsistentHashing = {
+    ConsistentHashingImpl(
+      replicaCount,
+      hashFn = x => JumpConsistentHash.jumpConsistentHash(MurmurHash3.stringHash(x), (replicaCount + 1) * nodes.length),
       SortedMap())
   }
 }
