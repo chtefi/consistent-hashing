@@ -1,4 +1,4 @@
-# Consistent Hashing
+# Consistent Hashing [![Build Status](https://travis-ci.org/chtefi/consistent-hashing.svg?branch=master)](https://travis-ci.org/chtefi/consistent-hashing)
 
 A simple implementation of the consistent hashing technique.
 
